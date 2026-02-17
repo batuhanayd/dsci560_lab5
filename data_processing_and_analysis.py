@@ -3,7 +3,6 @@ import io
 import json
 import os
 import csv
-import pickle
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Tuple
@@ -30,8 +29,7 @@ import nltk
 from nltk.tokenize import word_tokenize
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import PCA
+from gensim.models import Word2Vec
 
 
 def _log(msg):
@@ -186,6 +184,14 @@ def doc_combination(csv_path, json_path):
     return doc_strings
 
 
+def doc_to_vector(model, tokens):
+    """Convert a list of tokens to the mean of their Word2Vec vectors; zero vector if none in vocab."""
+    vectors = [model.wv[w] for w in tokens if w in model.wv]
+    if not vectors:
+        return np.zeros(model.vector_size)
+    return np.mean(vectors, axis=0)
+
+
 def run_embedding(
     csv_path="reddit_posts.csv",
     json_path="data/processed_data/reddit_ocr_results.json",
@@ -193,35 +199,32 @@ def run_embedding(
     vector_size=100,
     window=5,
     min_count=2,
+    workers=4,
 ):
-    """Build document strings, compute doc vectors (TfidfVectorizer + PCA), save vectors."""
+    """Build document strings, train Word2Vec, compute doc vectors as mean of word vectors, save."""
     _log("[EMBED] Step 2/3: Building document strings from CSV + OCR...")
     doc_strings = doc_combination(csv_path, json_path)
     _log(f"[EMBED] Got {len(doc_strings)} documents.")
     os.makedirs(out_dir, exist_ok=True)
     vectors_path = os.path.join(out_dir, "doc_vectors.npy")
+    model_path = os.path.join(out_dir, "word2vec.model")
 
-    _log("[EMBED] Using TfidfVectorizer + PCA...")
-    vectorizer = TfidfVectorizer(max_features=5000, min_df=1, max_df=0.95, sublinear_tf=True)
-    X = vectorizer.fit_transform(doc_strings).toarray()
-    n_components = min(vector_size, X.shape[0], X.shape[1])
-    if n_components < 1:
-        n_components = 1
-    pca = PCA(n_components=n_components, random_state=42)
-    doc_vectors = pca.fit_transform(X)
-    if doc_vectors.shape[1] < vector_size:
-        doc_vectors = np.hstack([doc_vectors, np.zeros((doc_vectors.shape[0], vector_size - doc_vectors.shape[1]))])
-    elif doc_vectors.shape[1] > vector_size:
-        doc_vectors = doc_vectors[:, :vector_size]
-    np.save(vectors_path, doc_vectors.astype(np.float64))
-    try:
-        with open(os.path.join(out_dir, "tfidf_vectorizer.pkl"), "wb") as f:
-            pickle.dump(vectorizer, f)
-        with open(os.path.join(out_dir, "tfidf_pca.pkl"), "wb") as f:
-            pickle.dump(pca, f)
-    except Exception as e:
-        _log(f"[EMBED] Warning: could not save vectorizer/PCA for query embedding: {e}")
-    _log(f"[EMBED] Done. Vectors saved to {vectors_path} (Tfidf+PCA)")
+    _log("[EMBED] Tokenizing and training Word2Vec...")
+    tokenized_docs = [word_tokenize(doc.lower()) for doc in doc_strings]
+    w2v_model = Word2Vec(
+        sentences=tokenized_docs,
+        vector_size=vector_size,
+        window=window,
+        min_count=min_count,
+        workers=workers,
+        sg=0,
+        seed=42,
+    )
+    _log("[EMBED] Computing doc vectors (mean of word vectors)...")
+    doc_vectors = np.array([doc_to_vector(w2v_model, tokens) for tokens in tokenized_docs], dtype=np.float64)
+    np.save(vectors_path, doc_vectors)
+    w2v_model.save(model_path)
+    _log(f"[EMBED] Done. Vectors saved to {vectors_path}, model to {model_path}")
     return None, doc_vectors
 
 
@@ -525,25 +528,15 @@ def run_cluster_tree(
 
 
 def embed_query(text: str, processed_dir: str = "data/processed_data") -> np.ndarray:
-    """Embed query with Tfidf+PCA; returns vector of same dimension as doc vectors."""
+    """Embed query with Word2Vec (mean of word vectors); returns vector of same dimension as doc vectors."""
     text = (text or "").strip().lower()
-    vectorizer_path = os.path.join(processed_dir, "tfidf_vectorizer.pkl")
-    pca_path = os.path.join(processed_dir, "tfidf_pca.pkl")
+    model_path = os.path.join(processed_dir, "word2vec.model")
     vectors_path = os.path.join(processed_dir, "doc_vectors.npy")
 
-    if os.path.isfile(vectorizer_path) and os.path.isfile(pca_path):
-        with open(vectorizer_path, "rb") as f:
-            vectorizer = pickle.load(f)
-        with open(pca_path, "rb") as f:
-            pca = pickle.load(f)
-        X = vectorizer.transform([text]).toarray()
-        vec = pca.transform(X)[0]
-        target_dim = 100
-        if len(vec) < target_dim:
-            vec = np.hstack([vec, np.zeros(target_dim - len(vec))])
-        elif len(vec) > target_dim:
-            vec = vec[:target_dim]
-        return vec.astype(np.float64)
+    if os.path.isfile(model_path):
+        model = Word2Vec.load(model_path)
+        tokens = word_tokenize(text)
+        return doc_to_vector(model, tokens).astype(np.float64)
 
     if os.path.isfile(vectors_path):
         v = np.load(vectors_path)

@@ -9,6 +9,7 @@ numpy>=1.21.0
 
 # NLP (data_processing_and_analysis.py)
 nltk>=3.8.0
+gensim>=4.0.0
 
 # Clustering & viz (data_processing_and_analysis.py)
 scikit-learn>=1.0.0
