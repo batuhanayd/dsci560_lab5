@@ -125,14 +125,20 @@ def utc_to_iso(utc_timestamp):
 def save_to_csv(posts, filename="reddit_posts.csv"):
     fields = [
         "post_id", "title", "author", "subreddit", "score", "num_comments",
-        "created_utc", "created_iso", "url", "permalink", "json_url",
+        "created_utc", "created_iso", "scraped_datetime", "url", "permalink", "json_url",
         "selftext", "image_urls",
     ]
+    scraped_now = datetime.now(timezone.utc).isoformat()
 
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         for post in posts:
+            # Preserve scraped_datetime for rows loaded from CSV; set to now for newly scraped
+            scraped_dt = post.get("scraped_datetime") or scraped_now
+            permalink = post.get("permalink", "")
+            if permalink and not permalink.startswith("http"):
+                permalink = f"{OLD_REDDIT_BASE}{permalink}"
             row = {
                 "post_id": post.get("id", ""),
                 "title": post.get("title", ""),
@@ -141,10 +147,11 @@ def save_to_csv(posts, filename="reddit_posts.csv"):
                 "score": post.get("score", 0),
                 "num_comments": post.get("num_comments", 0),
                 "created_utc": post.get("created_utc", ""),
-                "created_iso": utc_to_iso(post.get("created_utc", 0)),
+                "created_iso": post.get("created_iso") or utc_to_iso(post.get("created_utc", 0)),
+                "scraped_datetime": scraped_dt,
                 "url": post.get("url", ""),
-                "permalink": f"{OLD_REDDIT_BASE}{post.get('permalink', '')}",
-                "json_url": f"{OLD_REDDIT_BASE}{post.get('permalink', '')}.json",
+                "permalink": permalink or f"{OLD_REDDIT_BASE}{post.get('permalink', '')}",
+                "json_url": post.get("json_url") or f"{OLD_REDDIT_BASE}{post.get('permalink', '')}.json",
                 "selftext": post.get("selftext", ""),
                 "image_urls": " | ".join(post.get("_image_urls", [])),
             }

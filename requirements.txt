@@ -1,0 +1,20 @@
+
+# Scraping (reddit_scraper.py, pipeline)
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+
+# Data / DB (main_lab5.py and *_lab5.py)
+pymysql>=1.0.0
+numpy>=1.21.0
+
+# NLP (data_processing_and_analysis.py)
+nltk>=3.8.0
+
+# Clustering & viz (data_processing_and_analysis.py)
+scikit-learn>=1.0.0
+matplotlib>=3.5.0
+
+# OCR for images (data_processing_and_analysis.py; requires tesseract-ocr on system)
+# Ubuntu: sudo apt install tesseract-ocr
+pytesseract>=0.3.10
+Pillow>=9.0.0
